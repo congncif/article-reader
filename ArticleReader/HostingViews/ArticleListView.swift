@@ -10,8 +10,6 @@ import Kingfisher
 import SwiftUI
 
 struct ArticleListView: View {
-    @State private var selectedMode: ContentMode = .web
-
     @StateObject var model = ArticleModel()
 
     var body: some View {

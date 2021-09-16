@@ -20,9 +20,8 @@ struct ArticleReaderApp: App {
 
 class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
-        ServiceRegistry.initialize()
+        ServiceRegistry.container()
             .register { ArticleProvider() }.implements(ArticleService.self)
-            .next()
             .register { ReaderParser() }.implements(ReaderParseService.self)
 
         return true

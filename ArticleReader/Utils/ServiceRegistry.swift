@@ -10,16 +10,30 @@ import Foundation
 typealias ServiceRegistration<Service> = (ServiceRegistry) -> Service?
 
 final class ServiceRegistry {
-    fileprivate static var shared: ServiceRegistry {
-        guard let instance = _shared else {
-            preconditionFailure("ServiceRegistry must be initialized")
+    struct Domain: Hashable, RawRepresentable, Equatable {
+        let rawValue: String
+
+        init(rawValue: String) {
+            self.rawValue = rawValue
         }
-        return instance
+
+        static let shared = Domain(rawValue: "__SHARED__")
     }
 
-    static func initialize() -> ServiceRegistry {
-        let newRegistry = ServiceRegistry()
-        _shared = newRegistry
+    private static var containers: [Domain: ServiceRegistry] = [:]
+
+    static func container(_ domain: Domain = .shared) -> ServiceRegistry {
+        if let registry = containers[domain] {
+            return registry
+        }
+
+        var newRegistry: ServiceRegistry
+        if domain != .shared {
+            newRegistry = ServiceRegistry(parent: .container(.shared))
+        } else {
+            newRegistry = ServiceRegistry()
+        }
+        containers[domain] = newRegistry
         return newRegistry
     }
 
@@ -45,20 +59,22 @@ final class ServiceRegistry {
 
     func resolve<Service>(_ serviceType: Service.Type = Service.self) -> Service {
         guard let registration: ServiceRegistration<Service> = locateRegistration() else {
-            preconditionFailure("\(String(describing: Service.self)) not registered. To register service \(Service.self) use injector.register().")
+            preconditionFailure("\(String(describing: Service.self)) not registered.")
         }
 
         guard let service = registration(self) else {
-            preconditionFailure("\(String(describing: Service.self)) not resolved. To disambiguate optionals use injector.optionalInject().")
+            preconditionFailure("\(String(describing: Service.self)) not resolved. The service might be nil.")
         }
         return service
     }
 
     private var registrations: [String: Any] = [:]
 
-    private static var _shared: ServiceRegistry?
+    private let parent: ServiceRegistry?
 
-    private init() {}
+    private init(parent: ServiceRegistry? = nil) {
+        self.parent = parent
+    }
 }
 
 private extension ServiceRegistry {
@@ -68,7 +84,16 @@ private extension ServiceRegistry {
 
     func locateRegistration<Service>() -> ServiceRegistration<Service>? {
         let key = registrationKey(for: Service.self)
-        return registrations[key] as? ServiceRegistration<Service>
+
+        var fullRegistrations: [String: Any] = [:]
+
+        var cursor: ServiceRegistry? = self
+        while let iCursor = cursor {
+            fullRegistrations.merge(iCursor.registrations) { child, _ in child }
+            cursor = iCursor.parent
+        }
+
+        return fullRegistrations[key] as? ServiceRegistration<Service>
     }
 }
 
@@ -88,16 +113,23 @@ final class RegistrationOptions<Service> {
         return self
     }
 
-    /// Return registry for next registration
-    func next() -> ServiceRegistry { registry }
+    @discardableResult
+    func register<Service>(_ serviceRegistration: @escaping ServiceRegistration<Service>) -> RegistrationOptions<Service> {
+        registry.register(serviceRegistration)
+    }
+
+    @discardableResult
+    func register<Service>(_ serviceRegistration: @escaping () -> Service) -> RegistrationOptions<Service> {
+        registry.register(serviceRegistration)
+    }
 }
 
 @propertyWrapper
 struct Injected<Service> {
     private var service: Service
 
-    init() {
-        service = ServiceRegistry.shared.resolve(Service.self)
+    init(registry: ServiceRegistry = .container()) {
+        service = registry.resolve(Service.self)
     }
 
     var wrappedValue: Service {
@@ -115,9 +147,11 @@ struct Injected<Service> {
 struct LazyInjected<Service> {
     private var service: Service!
 
-    private var registry: ServiceRegistry { .shared }
+    private var registry: ServiceRegistry
 
-    init() {}
+    init(registry: ServiceRegistry = .container()) {
+        self.registry = registry
+    }
 
     var isEmpty: Bool {
         return service == nil
@@ -148,8 +182,8 @@ struct LazyInjected<Service> {
 struct OptionalInjected<Service> {
     private var service: Service?
 
-    init() {
-        service = ServiceRegistry.shared.optional()
+    init(registry: ServiceRegistry = .container()) {
+        service = registry.optional()
     }
 
     var wrappedValue: Service? {
